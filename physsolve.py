@@ -297,6 +297,12 @@ class MainWindow(QMainWindow):
         self.btn_play.clicked.connect(self.toggle)
         self.btn_csv.clicked.connect(self.export)
         self.on_system()
+        try:
+            from aichat import ChatDock
+            self.chat = ChatDock(self)
+            self.addDockWidget(Qt.RightDockWidgetArea, self.chat)
+        except ImportError:
+            pass
 
     # -- helpers
     @staticmethod
@@ -307,7 +313,7 @@ class MainWindow(QMainWindow):
     @property
     def system(self): return SYSTEMS[self.sys_box.currentIndex()]
 
-    def on_system(self):
+    def build_form(self):
         self.timer.stop()
         while self.form.rowCount():
             self.form.removeRow(0)
@@ -317,7 +323,54 @@ class MainWindow(QMainWindow):
             self.form.addRow(label, self.spins[key])
         self.dt.setValue(self.system.default_dt)
         self.T.setValue(self.system.default_T)
+
+    def on_system(self):
+        self.build_form()
         self.run(False)
+
+    # -- AI hooks -----------------------------------------------------------
+    def sim_context(self):
+        lines = ["Systems and parameter ranges:"]
+        for s in SYSTEMS:
+            ps = ", ".join(f"{k} [{lo}..{hi}]" for k, _, _, lo, hi, _, _ in s.params)
+            lines.append(f'- "{s.name}": {ps}')
+        lines.append("Methods: " + ", ".join(f'"{m}"' for m in METHODS))
+        lines.append("\nCurrent simulation state:\n" + self.report.toPlainText())
+        return "\n".join(lines)
+
+    def apply_action(self, a):
+        """Apply a validated AI action dict. Returns a human-readable summary."""
+        if not isinstance(a, dict):
+            raise ValueError("action must be an object")
+        if a.get("system"):
+            want = str(a["system"]).lower()
+            idx = next((i for i, s in enumerate(SYSTEMS)
+                        if want in s.name.lower() or s.name.lower().startswith(want)), None)
+            if idx is None:
+                raise ValueError(f"unknown system: {a['system']}")
+            if idx != self.sys_box.currentIndex():
+                self.sys_box.blockSignals(True)
+                self.sys_box.setCurrentIndex(idx)
+                self.sys_box.blockSignals(False)
+                self.build_form()
+        if a.get("method"):
+            want = str(a["method"]).lower()
+            m = next((m for m in METHODS if m.lower().startswith(want.split()[0])), None)
+            if m is None:
+                raise ValueError(f"unknown method: {a['method']}")
+            self.method_box.setCurrentText(m)
+        for key, val in (a.get("params") or {}).items():
+            if key in self.spins:
+                self.spins[key].setValue(float(val))      # spin box clamps to its range
+        if "T" in a:
+            self.T.setValue(float(a["T"]))
+        if "dt" in a:
+            self.dt.setValue(float(a["dt"]))
+        if self.T.value() / self.dt.value() > 100000:     # keep runs responsive
+            self.dt.setValue(self.T.value() / 100000)
+        self.run(bool(a.get("compare")))
+        return f"{self.system.name} | {self.method_box.currentText()} | dt={self.dt.value():g} T={self.T.value():g}" \
+               + (" | compare all" if a.get("compare") else "")
 
     def params(self): return {k: s.value() for k, s in self.spins.items()}
 
