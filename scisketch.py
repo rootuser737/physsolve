@@ -1,12 +1,13 @@
-"""PhysSolve - a trust-checked physics simulator.
+"""SciSketch - a trust-checked physics & science simulator with an offline AI tutor.
 
 PROBLEM: most educational/hobby simulators use naive integrators (Euler) that
 silently violate conservation laws, so the animation looks plausible but is
-physically wrong. PhysSolve runs every system against a high-precision
+physically wrong. SciSketch runs every system against a high-precision
 reference solution, measures energy drift and trajectory error, and gives a
 verdict on whether the simulation can be trusted.
 """
 import csv
+import json
 import sys
 import time
 from dataclasses import dataclass
@@ -15,12 +16,15 @@ import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QHBoxLayout,
     QLabel, QMainWindow, QPlainTextEdit, QPushButton, QSlider, QSplitter,
     QVBoxLayout, QWidget,
 )
 from scipy.integrate import solve_ivp
+
+from paths import resource_path
 
 # --------------------------------------------------------------------------
 # Physical systems (all conservative, so energy is a built-in correctness test)
@@ -237,7 +241,7 @@ def run_method(system, p, method, dt, T, Yref):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PhysSolve - trust-checked physics simulator")
+        self.setWindowTitle("SciSketch - verified physics & science simulator")
         self.resize(1400, 850)
         self.spins = {}
         self.results = {}
@@ -489,8 +493,54 @@ class MainWindow(QMainWindow):
                 w.writerow([r.t[k], *r.Y[k], *self.Yref[k], r.E[k], r.drift[k], r.err[k]])
 
 
-def main():
+def selftest():
+    """Headless smoke test used by CI and the packaged build: simulation + offline renderer."""
     app = QApplication(sys.argv)
+    w = MainWindow(); w.show()
+    out = {"simulation": bool(w.results) and bool(np.isfinite(w.results[w.sel].max_drift))}
+    view = getattr(getattr(w, "chat", None), "view", None)
+
+    def finish():
+        print("SELFTEST", json.dumps(out), flush=True)
+        app.exit(0 if all(v for k, v in out.items() if not k.startswith("_")) else 1)
+
+    if view is None or not hasattr(view, "page"):
+        out["offline_renderer"] = False
+        QTimer.singleShot(0, finish)
+    else:
+        view.set_messages([{"role": "assistant",
+                            "content": "$E=mc^2$\n```mermaid\ngraph TD; A-->B\n```"}], False)
+        tries = {"n": 0}
+        probe = ("JSON.stringify({katex: document.querySelectorAll('.katex').length, "
+                 "svg: document.querySelectorAll('.widget svg').length})")
+
+        def poll():                                  # the frozen build can take a few seconds to start Chromium
+            def got(r):
+                try:
+                    d = json.loads(r)
+                except (TypeError, ValueError):
+                    d = {}
+                tries["n"] += 1
+                if (d.get("katex") and d.get("svg")) or tries["n"] >= 25:
+                    out["offline_renderer"] = bool(d.get("katex") and d.get("svg"))
+                    out["_detail"] = {"loaded": view._ready, **d}
+                    finish()
+                else:
+                    QTimer.singleShot(1000, poll)
+            view.page().runJavaScript(probe, got)
+        QTimer.singleShot(2000, poll)
+    sys.exit(app.exec())
+
+
+def main():
+    if "--selftest" in sys.argv:
+        selftest()
+    app = QApplication(sys.argv)
+    app.setApplicationName("SciSketch")
+    app.setOrganizationName("SciSketch")
+    icon = resource_path("assets/scisketch.png")
+    if icon.exists():
+        app.setWindowIcon(QIcon(str(icon)))
     w = MainWindow()
     w.show()
     sys.exit(app.exec())

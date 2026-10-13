@@ -1,4 +1,4 @@
-"""SciSketch AI desktop client + chat dock for PhysSolve.
+"""SciSketch AI desktop client + chat dock for SciSketch.
 
 The API key is read from the SCISKETCH_KEY environment variable or from a local
 config.json (git-ignored). It is never hard-coded and never sent anywhere except
@@ -12,9 +12,11 @@ from pathlib import Path
 import requests
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QDockWidget, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextBrowser,
+    QDockWidget, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QPushButton, QTextBrowser,
     QVBoxLayout, QWidget,
 )
+
+from paths import exe_dir, user_config_path
 
 DEFAULT_URL = "https://ikzsalomhnqxkevmhtrx.supabase.co/functions/v1/api-chat"
 MAX_MESSAGES, MAX_CHARS = 50, 20000          # server limits (413 beyond these)
@@ -32,9 +34,12 @@ class ApiError(Exception):
 
 def load_config():
     cfg = {"api_url": DEFAULT_URL, "api_key": ""}
-    p = Path(__file__).with_name("config.json")
-    if p.exists():
-        cfg.update(json.loads(p.read_text(encoding="utf-8")))
+    for p in (user_config_path(), exe_dir() / "config.json"):       # later file wins
+        if p.exists():
+            try:
+                cfg.update(json.loads(p.read_text(encoding="utf-8")))
+            except ValueError:
+                pass
     cfg["api_key"] = os.environ.get("SCISKETCH_KEY", cfg.get("api_key", ""))
     return cfg
 
@@ -134,14 +139,14 @@ class FallbackView(QTextBrowser):
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
 
-ACTION_RE = re.compile(r"```physsolve\s*(\{.*?\})\s*```", re.S)
+ACTION_RE = re.compile(r"```scisketch-run\s*(\{.*?\})\s*```", re.S)
 
-PREAMBLE = """[PhysSolve desktop context - not part of the student's question]
-You are embedded in PhysSolve, a PySide6 simulator that verifies every run against a
+PREAMBLE = """[SciSketch desktop context - not part of the student's question]
+You are embedded in SciSketch, a PySide6 simulator that verifies every run against a
 high-precision reference. ONLY when the student asks you to run or set up a simulation,
 include exactly one fenced block like this (JSON, double quotes, omit unused keys):
 
-```physsolve
+```scisketch-run
 {"system": "Kepler orbit", "method": "RK4", "dt": 0.002, "T": 20, "params": {"e": 0.6}, "compare": false}
 ```
 Use "compare": true to overlay all three integrators. When explaining results, use ONLY
@@ -155,7 +160,7 @@ Student: %s"""
 
 class ChatDock(QDockWidget):
     def __init__(self, main):
-        super().__init__("AI tutor (SciSketch)", main)
+        super().__init__("AI tutor", main)
         self.main, self.history, self.worker, self.streaming = main, [], None, False
         self.cfg = load_config()
         self.client = SciSketchClient(self.cfg["api_url"], self.cfg["api_key"])
@@ -164,17 +169,17 @@ class ChatDock(QDockWidget):
         self.view = ChatView() if ChatView else FallbackView()
         self.status = QLabel()
         self.box = QLineEdit(); self.box.setPlaceholderText("Ask, or e.g. 'simulate a Kepler orbit with e=0.9 and compare methods'")
-        self.send = QPushButton("Send"); self.check = QPushButton("Test connection")
+        self.send = QPushButton("Send"); self.check = QPushButton("Test connection"); self.keybtn = QPushButton("API key...")
         row = QHBoxLayout(); row.addWidget(self.box, 1); row.addWidget(self.send)
-        lay.addWidget(self.view, 1); lay.addWidget(self.status); lay.addLayout(row); lay.addWidget(self.check)
+        lay.addWidget(self.view, 1); lay.addWidget(self.status); lay.addLayout(row); lay.addWidget(self.check); lay.addWidget(self.keybtn)
         self.setWidget(w); self.setMinimumWidth(420)
 
         self.send.clicked.connect(self.on_send)
         self.box.returnPressed.connect(self.on_send)
         self.check.clicked.connect(self.on_check)
+        self.keybtn.clicked.connect(self.on_key)
         if not self.cfg["api_key"]:
-            self.say("system", "No API key found. Create `config.json` next to the app "
-                               '(`{"api_key": "..."}`) or set the SCISKETCH_KEY environment variable, then restart.')
+            self.say("system", "No API key yet. Click **API key...** below and paste it (it is stored only on this computer).")
         self.render()
 
     # -- transcript
@@ -189,6 +194,25 @@ class ChatDock(QDockWidget):
         self.status.setText("Thinking..." if b else "")
 
     # -- actions
+    def on_key(self):
+        key, ok = QInputDialog.getText(self, "SciSketch API key", "Paste your SciSketch API key:",
+                                       QLineEdit.EchoMode.Password)
+        if not ok or not key.strip():
+            return
+        path = user_config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        data["api_key"] = key.strip()
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+        self.cfg["api_key"] = key.strip()
+        self.client.key = self.cfg["api_key"]
+        self.say("system", "API key saved on this computer.")
+        self.render()
+
     def on_check(self):
         self.busy(True)
         self.worker = Worker(lambda: [json.dumps(self.client.health())])

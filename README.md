@@ -1,37 +1,32 @@
-# PhysSolve
+# SciSketch
 
-A trust-checked physics simulator built with PySide6.
+A desktop (PySide6) science studio: **verified physics simulation + an offline-rendering AI tutor.**
 
-**Problem:** most educational simulators use naive integrators (Euler) whose energy
-silently drifts, so animations look right but are physically wrong.
+**Problem:** most educational simulators use naive integrators whose energy silently drifts, so
+animations look right while being physically wrong.
+**Solution:** every run is checked against a high-precision DOP853 reference (rtol 1e-12). SciSketch
+reports energy drift, trajectory error and a verdict (TRUSTWORTHY / USABLE / UNRELIABLE), and
+"Compare all methods" overlays Euler, RK4 and DOP853.
 
-**Solution:** every run is compared against a high-precision DOP853 reference
-(rtol 1e-12). PhysSolve reports energy drift, trajectory error and a verdict
-(TRUSTWORTHY / USABLE / UNRELIABLE). "Compare all methods" overlays Euler, RK4
-and DOP853 so the failure of naive methods is visible.
+- Systems: nonlinear pendulum, chaotic double pendulum, Kepler orbit, Hénon-Heiles
+- **AI tutor dock:** talks to your SciSketch AI (`api-chat` endpoint, streaming). Ask it to set up
+  simulations ("Kepler orbit, e=0.9, compare methods") and SciSketch runs them; explanations use the
+  verified numbers.
+- **Offline rendering:** Markdown, LaTeX (KaTeX), Mermaid, SVG, p5.js and three.js all render on your
+  machine from bundled libraries (`web/vendor`). No network from the view; p5/three run in sandboxed iframes.
+- CSV export, light/dark aware.
 
-Systems: nonlinear pendulum, chaotic double pendulum, Kepler orbit, Hénon–Heiles.
-Hollow marker in the animation = reference truth. CSV export included.
-
-## Run
+## Run from source
     pip install -r requirements.txt
-    python physsolve.py
+    python scisketch.py
 
-## AI tutor (SciSketch)
-The right-hand dock chats with your SciSketch AI through its `api-chat` endpoint
-(streaming). Ask it to set up simulations ("Kepler orbit, e=0.9, compare methods")
-and PhysSolve runs them; its explanations use the verified numbers from the current run.
+First launch: click **API key...** in the AI dock and paste your key (stored only on this computer in
+`~/.scisketch/config.json`, or `%APPDATA%\SciSketch\config.json` on Windows). `SCISKETCH_KEY` env var also works.
 
-Setup: copy `config.example.json` to `config.json` and paste your key
-(or set the `SCISKETCH_KEY` environment variable). `config.json` is git-ignored.
+## Build the app
+    build.bat        # Windows -> dist\SciSketch\SciSketch.exe
+    ./build.sh       # Linux/macOS -> dist/SciSketch/
+GitHub Actions (`.github/workflows/build.yml`) builds Windows, macOS and Linux on every push and
+runs `SciSketch --selftest` (simulation + offline renderer) before uploading the artifacts.
 
-## Offline rich rendering
-Replies from the AI are rendered **on your machine** in an embedded Chromium view (QtWebEngine):
-Markdown, LaTeX (KaTeX), Mermaid diagrams, SVG, and interactive p5.js (2D) and three.js (3D) simulations.
-All libraries are bundled in `web/vendor`, so rendering needs no internet and puts no load on any server;
-only the text of the chat itself travels to your API.
-
-Safety: all network access from the view is blocked, SVG is sanitized, and p5/three code runs in
-sandboxed iframes with no access to your files or the network. CDN links in AI-written pages are
-swapped for the bundled copies automatically (three.js UMD build r160).
-Third-party licenses are in `web/vendor/*-LICENSE`.
+Third-party licenses: `web/vendor/*-LICENSE` (p5.js is LGPL-2.1).

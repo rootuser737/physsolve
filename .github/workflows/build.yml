@@ -1,0 +1,48 @@
+name: Build SciSketch
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Linux system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-cursor0 libxkbcommon-x11-0 libnss3 libasound2t64 libegl1 libxcomposite1 libxdamage1 libxrandr2 libxtst6
+      - name: Install
+        run: pip install -r requirements.txt -r requirements-build.txt
+      - name: Build
+        run: pyinstaller scisketch.spec --noconfirm --clean
+      - name: Self-test (Linux/macOS)
+        if: runner.os != 'Windows'
+        env: { QT_QPA_PLATFORM: offscreen, QTWEBENGINE_CHROMIUM_FLAGS: "--no-sandbox --disable-gpu" }
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then BIN="dist/SciSketch.app/Contents/MacOS/SciSketch"; else BIN="dist/SciSketch/SciSketch"; fi
+          "$BIN" --selftest
+      - name: Self-test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env: { QT_QPA_PLATFORM: offscreen, QTWEBENGINE_CHROMIUM_FLAGS: "--disable-gpu" }
+        run: |
+          $p = Start-Process dist/SciSketch/SciSketch.exe -ArgumentList "--selftest" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "self-test failed ($($p.ExitCode))" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SciSketch-${{ runner.os }}
+          path: |
+            dist/SciSketch
+            dist/SciSketch.app
+          if-no-files-found: ignore

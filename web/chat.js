@@ -1,6 +1,6 @@
 // Offline renderer: markdown + KaTeX + Mermaid + sandboxed SVG / p5.js / three.js.
 // Everything loads from ./vendor. The page has no network access (CSP + Qt interceptor).
-const SPECIAL = new Set(['mermaid', 'svg', 'p5', 'p5js', 'three', 'threejs', 'physsolve']);
+const SPECIAL = new Set(['mermaid', 'svg', 'p5', 'p5js', 'three', 'threejs', 'scisketch-run']);
 const BASE = new URL('.', location.href).href;
 const IFRAME_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; connect-src 'none'";
 const dark = matchMedia('(prefers-color-scheme: dark)').matches;
@@ -28,7 +28,7 @@ function process(text, streaming) {
     codes.push(m); return `ZZC${codes.length - 1}ZZ`;
   });
   if (streaming) {   // a special fence that is still being written
-    text = text.replace(/```(mermaid|svg|p5js?|three(?:js)?|physsolve)[^\n]*\n[\s\S]*$/i,
+    text = text.replace(/```(mermaid|svg|p5js?|three(?:js)?|scisketch-run)[^\n]*\n[\s\S]*$/i,
       (m, lang) => wtok({ lang: lang.toLowerCase(), body: '', pending: true }));
   }
   text = text.replace(/`[^`\n]+`/g, m => { codes.push(m); return `ZZC${codes.length - 1}ZZ`; });
@@ -80,11 +80,11 @@ function frameDoc(kind, code, id) {
 
 function build(w) {
   const lang = w.lang === 'p5js' ? 'p5' : w.lang === 'threejs' ? 'three' : w.lang;
-  const names = { mermaid: 'Diagram', svg: 'Illustration', p5: 'Interactive 2D simulation (p5.js)', three: 'Interactive 3D (three.js)', physsolve: 'Simulation request' };
+  const names = { mermaid: 'Diagram', svg: 'Illustration', p5: 'Interactive 2D simulation (p5.js)', three: 'Interactive 3D (three.js)', 'scisketch-run': 'Simulation request' };
   const { box, body } = widgetShell(w, names[lang]);
   if (w.pending) { body.textContent = 'Building ' + names[lang].toLowerCase() + '...'; return box; }
 
-  if (lang === 'physsolve') {
+  if (lang === 'scisketch-run') {
     body.innerHTML = `<details><summary>Sent to the simulator</summary><pre><code>${esc(w.body.trim())}</code></pre></details>`;
   } else if (lang === 'mermaid') {
     const id = 'mm' + (++mermaidSeq);

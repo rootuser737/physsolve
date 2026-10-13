@@ -14,7 +14,9 @@ from PySide6.QtWebEngineCore import (
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
-WEB_DIR = Path(__file__).with_name("web")
+from paths import resource_path
+
+WEB_DIR = resource_path("web")
 ALLOWED_SCHEMES = {"file", "data", "blob", "about", "qrc"}
 SANDBOX_LIBS = {"p5": "p5.min.js", "three": "three.min.js"}   # inlined into sandboxed iframes by chat.js
 
