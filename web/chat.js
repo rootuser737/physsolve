@@ -3,8 +3,27 @@
 const SPECIAL = new Set(['mermaid', 'svg', 'p5', 'p5js', 'three', 'threejs', 'scisketch-run']);
 const BASE = new URL('.', location.href).href;
 const IFRAME_CSP = "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; connect-src 'none'";
-const dark = matchMedia('(prefers-color-scheme: dark)').matches;
-mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' });
+let dark = true, lastMessages = [], lastStreaming = false;
+mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'dark' });
+window.setTheme = function (pal, isDark) {            // called from Python whenever the app theme changes
+  const r = document.documentElement.style;
+  for (const k in pal) r.setProperty('--' + k, pal[k]);
+  dark = !!isDark;
+  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' });
+  rendered.length = 0; log.innerHTML = ''; window.setMessages(lastMessages, lastStreaming);   // redraw diagrams in the new theme
+};
+// Lets the app save the AI's illustrations / diagrams / simulations as files.
+window.collectWidgets = function () {
+  const out = [];
+  document.querySelectorAll('.widget').forEach((w, i) => {
+    const title = (w.querySelector('.wbar span') || {}).textContent || 'Visual';
+    const svg = w.querySelector('.wbody > svg');
+    const fr = w.querySelector('iframe');
+    if (svg) out.push({ kind: 'svg', title, data: svg.outerHTML.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"') });
+    else if (fr) out.push({ kind: 'html', title, data: fr.srcdoc });
+  });
+  return JSON.stringify(out);
+};
 
 const log = document.getElementById('log');
 const rendered = [];            // per-message cache: {content, streaming, el}
@@ -122,7 +141,7 @@ window.addEventListener('message', e => {
 function renderMessage(m, streaming) {
   const el = document.createElement('div');
   el.className = 'msg ' + m.role;
-  const who = { user: 'You', assistant: 'AI tutor', system: 'Note' }[m.role] || m.role;
+  const who = { user: 'You', assistant: 'Teacher', system: 'Note' }[m.role] || m.role;
   el.innerHTML = `<div class="who">${who}</div><div class="content"></div>`;
   const content = el.querySelector('.content');
   if (m.role === 'user' || m.role === 'system') {
@@ -137,6 +156,7 @@ function renderMessage(m, streaming) {
 
 // Called from Python: messages = [{role, content}], streaming = bool (last message still arriving)
 window.setMessages = function (messages, streaming) {
+  lastMessages = messages; lastStreaming = streaming;
   messages.forEach((m, i) => {
     const live = streaming && i === messages.length - 1;
     const c = rendered[i];

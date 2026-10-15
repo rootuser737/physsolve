@@ -1,23 +1,25 @@
-:root { --bg:#ffffff; --fg:#1d2330; --muted:#6b7385; --card:#f3f5f9; --user:#e3eeff; --line:#d5dae5; --accent:#2563eb; }
-@media (prefers-color-scheme: dark) {
-  :root { --bg:#161a22; --fg:#e6e9f0; --muted:#98a0b3; --card:#202634; --user:#1e3354; --line:#343c4f; --accent:#6ea0ff; }
-}
-html,body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
-#log { padding:10px 12px 24px; }
-.msg { margin:10px 0; padding:8px 12px; border-radius:10px; background:var(--card); overflow-wrap:anywhere; }
-.msg.user { background:var(--user); }
+/* colours are set from Python (window.setTheme) so the chat always matches the app theme */
+:root { --bg:#151933; --fg:#e9ebf8; --muted:#8e95ba; --card:#1c2142; --user:rgba(124,108,255,.22); --line:#2b3158; --accent:#7c6cff; }
+html,body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.55 "Segoe UI",Inter,system-ui,-apple-system,Roboto,sans-serif; }
+#log { padding:12px 14px 28px; }
+.msg { margin:12px 0; padding:10px 14px; border-radius:14px; background:var(--card); border:1px solid var(--line); overflow-wrap:anywhere; }
+.msg.assistant { border-left:3px solid var(--accent); }
+.msg.user { background:var(--user); border-color:transparent; margin-left:34px; }
 .msg.system { background:transparent; border:1px dashed var(--line); color:var(--muted); font-size:12.5px; }
-.who { font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px; }
-.msg p { margin:.4em 0; }
-.msg pre { background:rgba(127,127,127,.15); padding:8px; border-radius:6px; overflow:auto; }
-.msg code { font-family:ui-monospace,Consolas,monospace; font-size:12.5px; }
-.msg table { border-collapse:collapse; } .msg td,.msg th { border:1px solid var(--line); padding:3px 8px; }
+.who { font-size:11px; font-weight:700; color:var(--accent); text-transform:uppercase; letter-spacing:.06em; margin-bottom:3px; }
+.msg.user .who, .msg.system .who { color:var(--muted); }
+.msg p { margin:.45em 0; } .msg h3,.msg h4 { margin:.7em 0 .3em; } .msg h3 { font-size:16px; } .msg h4 { font-size:14px; color:var(--accent); }
+.msg pre { background:rgba(127,127,127,.16); padding:9px; border-radius:8px; overflow:auto; }
+.msg code { font-family:ui-monospace,Consolas,monospace; font-size:12.5px; background:rgba(127,127,127,.16); padding:1px 5px; border-radius:5px; }
+.msg pre code { background:none; padding:0; }
+.msg table { border-collapse:collapse; margin:6px 0; } .msg td,.msg th { border:1px solid var(--line); padding:4px 10px; } .msg th { background:rgba(127,127,127,.12); }
+.msg ul { padding-left:22px; }
 .katex-display { overflow-x:auto; overflow-y:hidden; padding:2px 0; }
-.widget { margin:8px 0; border:1px solid var(--line); border-radius:8px; background:var(--bg); overflow:hidden; }
-.widget .wbar { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); padding:3px 8px; background:var(--card); }
+.widget { margin:10px 0; border:1px solid var(--line); border-radius:10px; background:var(--bg); overflow:hidden; }
+.widget .wbar { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); padding:4px 10px; background:var(--card); }
 .widget .wbody { padding:6px; text-align:center; overflow:auto; }
 .widget svg { max-width:100%; height:auto; }
 .widget iframe { width:100%; height:420px; border:0; background:#fff; resize:vertical; display:block; }
 .widget.pending .wbody { color:var(--muted); font-style:italic; }
-.widget details { text-align:left; } .widget summary { cursor:pointer; }
-.warn { color:#c2410c; font-size:12px; padding:4px 8px; }
+.widget details { text-align:left; } .widget summary { cursor:pointer; color:var(--muted); }
+.warn { color:#f59e0b; font-size:12px; padding:4px 8px; }

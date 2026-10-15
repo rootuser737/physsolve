@@ -1,4 +1,4 @@
-"""SciSketch AI desktop client + chat dock for SciSketch.
+"""SciSketch AI client + the live-teacher chat panel.
 
 The API key is read from the SCISKETCH_KEY environment variable or from a local
 config.json (git-ignored). It is never hard-coded and never sent anywhere except
@@ -10,10 +10,9 @@ import re
 from pathlib import Path
 
 import requests
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import (
-    QDockWidget, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QPushButton, QTextBrowser,
-    QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QPushButton, QTextBrowser, QVBoxLayout,
 )
 
 from paths import exe_dir, user_config_path
@@ -130,77 +129,146 @@ try:
 except ImportError:
     ChatView = None
 
+from exporter import tex_plain
+
 
 class FallbackView(QTextBrowser):
-    """Plain markdown view used only if QtWebEngine is unavailable."""
+    """Plain view used when Chromium cannot start on this machine. Formulas are shown as readable Unicode."""
+    rich = False
+
+    def __init__(self, *a):
+        super().__init__(*a)
+        self.setOpenExternalLinks(True)
+        self._msgs, self._pal = [], None
+
+    def set_theme(self, pal, dark):
+        self._pal = pal
+        self.setStyleSheet(f"QTextBrowser {{ background:{pal['bg']}; color:{pal['fg']}; border:none; padding:8px; font-size:10.5pt; }}")
+        self.set_messages(self._msgs)
+
     def set_messages(self, messages, streaming=False):
-        names = {"user": "You", "assistant": "AI", "system": "Note"}
-        self.setMarkdown("\n\n".join(f"**{names[m['role']]}:** {m['content']}" for m in messages))
+        self._msgs = messages
+        names = {"user": "You", "assistant": "Teacher", "system": "Note"}
+        self.setMarkdown("\n\n---\n\n".join(f"**{names[m['role']]}:** {tex_plain(m['content'])}" for m in messages))
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+
+    def health(self, cb): cb(dict(ok=True, loaded=True, fallback=True))
+    def collect_widgets(self, cb): cb([])
+    def diagnostics(self, cb): cb("Compatibility view is active (Chromium renderer unavailable).", {"ok": False, "fallback": True})
 
 
 ACTION_RE = re.compile(r"```scisketch-run\s*(\{.*?\})\s*```", re.S)
 
-PREAMBLE = """[SciSketch desktop context - not part of the student's question]
-You are embedded in SciSketch, a PySide6 simulator that verifies every run against a
-high-precision reference. ONLY when the student asks you to run or set up a simulation,
-include exactly one fenced block like this (JSON, double quotes, omit unused keys):
+PREAMBLE = """[SciSketch live-teacher context - not part of the student's question]
+%(persona)s
+You are the live teacher inside SciSketch, a PySide6 lab that verifies every run against a high-precision
+reference. Be concise (under 180 words unless asked), warm, and Socratic: end with ONE short question that makes the
+student predict or try something. Use LaTeX ($...$) for equations. ONLY when the student asks you to run or set up a
+simulation, include exactly one fenced block like this (JSON, double quotes, omit unused keys):
 
 ```scisketch-run
 {"system": "Kepler orbit", "method": "RK4", "dt": 0.002, "T": 20, "params": {"e": 0.6}, "compare": false}
 ```
-Use "compare": true to overlay all three integrators. When explaining results, use ONLY
-the verified numbers below and never invent numbers.
+Use "compare": true to overlay all three integrators. When explaining results, use ONLY the verified numbers below
+and never invent numbers.
 
-%s
+%(context)s
 [End of context]
 
-Student: %s"""
+Student: %(text)s"""
 
 
-class ChatDock(QDockWidget):
+class ChatPanel(QFrame):
+    """Card with the transcript, input box and the AI / offline-teacher routing."""
+    user_text = Signal(str)            # the student typed something (main window decides how to answer)
+    assistant_said = Signal(str)       # any teacher message (AI or offline) - used for speech
+    health_changed = Signal(bool)
+
     def __init__(self, main):
-        super().__init__("AI tutor", main)
-        self.main, self.history, self.worker, self.streaming = main, [], None, False
+        super().__init__()
+        self.setObjectName("card")
+        self.main, self.history, self.worker, self.streaming, self.level = main, [], None, False, "Undergraduate"
         self.cfg = load_config()
         self.client = SciSketchClient(self.cfg["api_url"], self.cfg["api_key"])
-
-        w = QWidget(); lay = QVBoxLayout(w)
+        lay = QVBoxLayout(self); lay.setContentsMargins(14, 12, 14, 14); lay.setSpacing(8)
+        top = QHBoxLayout()
+        t = QLabel("Live teacher"); t.setObjectName("h")
+        self.mode = QLabel(); self.mode.setObjectName("badge")
+        top.addWidget(t); top.addStretch(1); top.addWidget(self.mode)
+        lay.addLayout(top)
         self.view = ChatView() if ChatView else FallbackView()
-        self.status = QLabel()
-        self.box = QLineEdit(); self.box.setPlaceholderText("Ask, or e.g. 'simulate a Kepler orbit with e=0.9 and compare methods'")
-        self.send = QPushButton("Send"); self.check = QPushButton("Test connection"); self.keybtn = QPushButton("API key...")
-        row = QHBoxLayout(); row.addWidget(self.box, 1); row.addWidget(self.send)
-        lay.addWidget(self.view, 1); lay.addWidget(self.status); lay.addLayout(row); lay.addWidget(self.check); lay.addWidget(self.keybtn)
-        self.setWidget(w); self.setMinimumWidth(420)
-
+        lay.addWidget(self.view, 1)
+        self.status = QLabel(); self.status.setObjectName("muted")
+        lay.addWidget(self.status)
+        row = QHBoxLayout()
+        self.box = QLineEdit(); self.box.setPlaceholderText("Ask anything about this experiment...")
+        self.send = QPushButton("Send"); self.send.setObjectName("primary")
+        row.addWidget(self.box, 1); row.addWidget(self.send)
+        lay.addLayout(row)
         self.send.clicked.connect(self.on_send)
         self.box.returnPressed.connect(self.on_send)
-        self.check.clicked.connect(self.on_check)
-        self.keybtn.clicked.connect(self.on_key)
-        if not self.cfg["api_key"]:
-            self.say("system", "No API key yet. Click **API key...** below and paste it (it is stored only on this computer).")
-        self.render()
+        self.refresh_mode()
+        self._checks = 0
+        if ChatView:
+            QTimer.singleShot(2500, self.check_health)      # is Chromium alive? if not -> compatibility view
 
-    # -- transcript
+    # ---- status
+    @property
+    def ai_ready(self):
+        return bool(self.cfg.get("api_key"))
+
+    def refresh_mode(self):
+        self.mode.setText("AI + offline teacher" if self.ai_ready else "Offline teacher")
+
+    def set_theme(self, pal, dark):
+        self._pal = (pal, dark)
+        self.view.set_theme(pal, dark)
+
+    # ---- renderer health
+    def check_health(self):
+        def got(h):
+            if h.get("ok"):
+                self.health_changed.emit(True); return
+            self._checks += 1
+            if self._checks < 6:
+                QTimer.singleShot(2000, self.check_health)
+            else:
+                self.use_fallback("The rich renderer (Chromium) could not start on this computer, so the simple view is used. "
+                                  "Everything still works; formulas appear as plain text. Try Appearance > Rendering > Compatible.")
+        self.view.health(got)
+
+    def use_fallback(self, why):
+        old = self.view
+        new = FallbackView()
+        lay = self.layout(); lay.replaceWidget(old, new)
+        old.hide(); old.deleteLater(); self.view = new
+        if getattr(self, "_pal", None):
+            new.set_theme(*self._pal)
+        self.say("system", why); self.render(); self.health_changed.emit(False)
+
+    # ---- transcript
     def say(self, who, text):
         self.history.append({"role": who, "content": text})
+        if who == "assistant":
+            self.assistant_said.emit(text)
 
     def render(self):
         self.view.set_messages(self.history, self.streaming)
 
+    def teacher(self, md):
+        """Post an offline-teacher message."""
+        self.say("assistant", md); self.render()
+
     def busy(self, b):
-        self.send.setEnabled(not b); self.check.setEnabled(not b)
+        self.send.setEnabled(not b)
         self.status.setText("Thinking..." if b else "")
 
-    # -- actions
+    # ---- AI key / health
     def on_key(self):
-        key, ok = QInputDialog.getText(self, "SciSketch API key", "Paste your SciSketch API key:",
-                                       QLineEdit.EchoMode.Password)
+        key, ok = QInputDialog.getText(self, "SciSketch API key", "Paste your SciSketch API key:", QLineEdit.EchoMode.Password)
         if not ok or not key.strip():
             return
-        path = user_config_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path = user_config_path(); path.parent.mkdir(parents=True, exist_ok=True)
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         data["api_key"] = key.strip()
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
@@ -208,10 +276,8 @@ class ChatDock(QDockWidget):
             os.chmod(path, 0o600)
         except OSError:
             pass
-        self.cfg["api_key"] = key.strip()
-        self.client.key = self.cfg["api_key"]
-        self.say("system", "API key saved on this computer.")
-        self.render()
+        self.cfg["api_key"] = self.client.key = key.strip()
+        self.refresh_mode(); self.say("system", "API key saved on this computer. The AI teacher is on."); self.render()
 
     def on_check(self):
         self.busy(True)
@@ -221,17 +287,23 @@ class ChatDock(QDockWidget):
         self.worker.finished.connect(lambda: (self.busy(False), self.render()))
         self.worker.start()
 
+    # ---- sending
     def on_send(self):
         text = self.box.text().strip()
-        if not text or not self.cfg["api_key"] or (self.worker and self.worker.isRunning()):
+        if not text or (self.worker and self.worker.isRunning()):
             return
         self.box.clear()
-        convo = [m for m in self.history if m["role"] in ("user", "assistant")]
-        prompt = PREAMBLE % (self.main.sim_context(), text)
-        self.say("user", text)
-        self.say("assistant", "")
-        self.streaming = True
-        self.render(); self.busy(True)
+        self.say("user", text); self.render()
+        self.user_text.emit(text)
+
+    def ask_ai(self, text, context, persona, on_fail=None, shown=True):
+        """Stream an answer from the AI. `on_fail(msg)` lets the caller fall back to the offline teacher."""
+        convo = [m for m in self.history if m["role"] in ("user", "assistant") and m["content"]]
+        if convo and convo[-1]["role"] == "user" and convo[-1]["content"] == text:
+            convo = convo[:-1]
+        prompt = PREAMBLE % dict(persona=persona, context=context, text=text)
+        self.say("assistant", ""); self.streaming = True; self.render(); self.busy(True)
+        self._on_fail = on_fail
         self.worker = Worker(lambda: self.client.stream(convo + [{"role": "user", "content": prompt}]))
         self.worker.chunk.connect(self.on_chunk)
         self.worker.failed.connect(self.on_fail)
@@ -244,19 +316,26 @@ class ChatDock(QDockWidget):
 
     def on_fail(self, msg):
         self.streaming = False
-        if not self.history[-1]["content"]:
+        if self.history and not self.history[-1]["content"]:
             self.history.pop()
-        self.say("system", msg)
+        self.say("system", msg + " - answering with the offline teacher instead.")
+        cb, self._on_fail = getattr(self, "_on_fail", None), None
+        if cb:
+            cb(msg)
 
     def on_done(self):
         self.streaming = False
         self.busy(False)
-        if self.history and self.history[-1]["role"] == "assistant":
-            m = ACTION_RE.search(self.history[-1]["content"])
+        if self.history and self.history[-1]["role"] == "assistant" and self.history[-1]["content"]:
+            txt = self.history[-1]["content"]
+            m = ACTION_RE.search(txt)
             if m:
                 try:
-                    note = self.main.apply_action(json.loads(m.group(1)))
-                    self.say("system", f"Ran simulation: {note}")
-                except Exception as e:
+                    self.say("system", f"Ran simulation: {self.main.apply_action(json.loads(m.group(1)))}")
+                except Exception as e:  # noqa: BLE001
                     self.say("system", f"Could not apply the AI's simulation request: {e}")
+            self.assistant_said.emit(ACTION_RE.sub("", txt))
         self.render()
+
+
+ChatDock = ChatPanel          # backwards-compatible name
