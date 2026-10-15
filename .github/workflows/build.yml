@@ -23,9 +23,19 @@ jobs:
       - name: Tests (physics + teacher, exports, full GUI)
         env: { QT_QPA_PLATFORM: offscreen, QTWEBENGINE_CHROMIUM_FLAGS: "--no-sandbox" }
         run: |
-          python tests/test_core.py
-          python tests/test_export.py
-          python tests/test_gui.py
+          fail=0
+          for t in test_core test_export test_gui; do
+            echo "=== $t"
+            if ! python tests/$t.py > $t.log 2>&1; then
+              fail=1
+              cat $t.log | tail -40
+              msg=$(grep -v -E 'RHI|dbus|GPUInfo|propagateSize' $t.log | tail -25 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+              echo "::error title=$t failed::$msg"
+            else
+              tail -3 $t.log
+            fi
+          done
+          exit $fail
 
   build:
     needs: test
